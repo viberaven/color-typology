@@ -1,7 +1,7 @@
 module.exports = {
   GOOGLE_API_KEY: "KEY",
 
-  ANALYSIS_MODEL: "gemini-2.5-flash",
+  ANALYSIS_MODEL: "gemini-3-flash-preview",
 
   // GENERATIVE_MODEL: "gemini-2.5-flash-image",
   GENERATIVE_MODEL: "gemini-3-pro-image-preview",

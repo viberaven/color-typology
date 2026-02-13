@@ -5,6 +5,7 @@ const path = require("path");
 const { GoogleGenAI } = require("@google/genai");
 const { GOOGLE_API_KEY, GENERATIVE_MODEL, ANALYSIS_MODEL } = require("./config");
 const { palettes, buildGenerationPrompt, buildRefinementPrompt } = require("./color-palettes");
+const { validateExtraction, analyzeColors } = require("./color-analysis");
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -64,79 +65,75 @@ app.post("/api/analyze", upload.single("face"), async (req, res) => {
       ({ mimeType, data: base64Face } = parseBase64Image(req.body.face));
     }
 
-    const typologyNames = Object.keys(palettes).join(", ");
+    // Step 1: Ask Gemini to extract raw hex colors from face regions
+    const extractionPrompt = `You are a color sampling tool. Look at this face photo and report the literal visible color of each region listed below as a hex value.
 
-    const analysisPrompt = `You are an expert color analyst trained in the 12-season personal color analysis system. Analyze this person's photo to determine their seasonal color typology.
+CRITICAL: Report the ACTUAL color you see in the photo, INCLUDING any lighting cast (warm/cool tint from ambient light). Do NOT attempt to correct for lighting or guess the "true" color — just sample what is visible.
 
-VALID TYPOLOGIES: ${typologyNames}
+Sample these 9 regions and return a JSON object:
+- skin_forehead: center of forehead
+- skin_cheek: fullest part of one cheek
+- skin_neck: front of neck (or "N/A" if not visible)
+- skin_jawline: along the jawline (or "N/A" if not visible)
+- hair: mid-shaft of hair (or "N/A" if bald/shaved/not visible)
+- eye_iris: the iris color of one eye
+- eye_sclera: the white of one eye (important for calibration)
+- lip: natural lip color (center of lower lip)
+- eyebrow: eyebrow hair color
 
-ANALYSIS METHOD — evaluate these four dimensions systematically:
-
-1. UNDERTONE (Warm vs Cool):
-   - Warm: skin has golden, peachy, or yellow undertones; veins appear greenish
-   - Cool: skin has pink, rosy, or bluish undertones; veins appear blue/purple
-   - Look at the neck, jawline, and forehead where undertone is most visible
-
-2. VALUE/DEPTH (Light vs Medium vs Deep):
-   - Consider the OVERALL combination of hair color + skin tone + eye color
-   - Light: fair skin, light hair (blonde, light brown, light red), light eyes
-   - Deep: dark hair, medium-to-dark skin or high contrast dark features, dark eyes
-   - Medium: falls between — neither strikingly light nor deep
-
-3. CHROMA (Bright/Clear vs Soft/Muted):
-   - Bright/Clear: high contrast between features, vivid eye color, clear skin
-   - Soft/Muted: low contrast between features, blended or muted coloring, gentle transitions
-
-4. SEASON MAPPING:
-   - Spring (warm, light-to-medium, clear): Light Spring, True Spring, Bright Spring
-   - Summer (cool, light-to-medium, soft): Light Summer, True Summer, Soft Summer
-   - Autumn (warm, medium-to-deep, muted-to-rich): Soft Autumn, True Autumn, Deep Autumn
-   - Winter (cool, medium-to-deep, clear/high-contrast): Deep Winter, True Winter, Bright Winter
-
-KEY DISTINCTIONS:
-   - Light Spring vs Light Summer: both light, but Spring is warm-toned, Summer is cool-toned
-   - Soft Summer vs Soft Autumn: both muted, but Summer is cool, Autumn is warm
-   - Deep Autumn vs Deep Winter: both deep, but Autumn is warm, Winter is cool
-   - Bright Spring vs Bright Winter: both vivid, but Spring is warm, Winter is cool
-   - "True" seasons are the most balanced expression of their season (not notably light, deep, soft, or bright)
-
-Return ONLY a valid JSON object: {"typology": "<exact name from the list>", "reasoning": "<4-5 sentences explaining your undertone, value, and chroma observations, and why this maps to the chosen season>"}`;
+Return ONLY a JSON object with these 9 keys. Each value must be a hex color like "#A1B2C3" or "N/A" if the region is not visible. No other text.`;
 
     const result = await ai.models.generateContent({
       model: ANALYSIS_MODEL,
       contents: [
         { inlineData: { mimeType, data: base64Face } },
-        { text: analysisPrompt },
+        { text: extractionPrompt },
       ],
       config: {
-        temperature: 1.0,
+        temperature: 0.1,
+        responseMimeType: "application/json",
       },
     });
 
-    console.log("Analyze: model=%s tokens=%j", ANALYSIS_MODEL, result.usageMetadata);
-    const text = result.text.trim();
-    // Extract JSON from the response (handle potential markdown wrapping)
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return res.status(500).json({ error: "Failed to parse analysis response", raw: text });
+    console.log("Extract: model=%s tokens=%j", ANALYSIS_MODEL, result.usageMetadata);
+    let text = result.text.trim();
+
+    // Parse JSON (handle markdown wrapping as fallback)
+    let extracted;
+    try {
+      extracted = JSON.parse(text);
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return res.status(500).json({ error: "Failed to parse extraction response", raw: text });
+      }
+      extracted = JSON.parse(jsonMatch[0]);
     }
 
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    // Validate the typology name
-    if (!palettes[parsed.typology]) {
-      return res.status(500).json({ error: `Unknown typology: ${parsed.typology}`, raw: text });
+    // Step 2: Validate extraction
+    const errors = validateExtraction(extracted);
+    if (errors.length) {
+      return res.status(500).json({ error: "Color extraction incomplete", details: errors, raw: extracted });
     }
 
-    const palette = palettes[parsed.typology];
+    // Step 3: Run deterministic analysis pipeline
+    const analysis = analyzeColors(extracted);
+
+    // Validate the typology name against known palettes
+    if (!palettes[analysis.typology]) {
+      return res.status(500).json({ error: `Unknown typology: ${analysis.typology}`, _debug: analysis._debug });
+    }
+
+    const palette = palettes[analysis.typology];
     res.json({
-      typology: parsed.typology,
-      reasoning: parsed.reasoning,
+      typology: analysis.typology,
+      reasoning: analysis.reasoning,
       palette: {
         allowedColors: palette.allowedColors,
         forbiddenColors: palette.forbiddenColors,
         vibe: palette.vibe,
       },
+      _debug: analysis._debug,
     });
   } catch (err) {
     console.error("Analyze error:", err);
