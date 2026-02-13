@@ -275,34 +275,37 @@ function buildGenerationPrompt(typologyName, style) {
   const outfit = style === "casual" ? palette.casualOutfit : palette.smartCasualOutfit;
   const styleLabel = style === "casual" ? "Casual" : "Smart Casual";
 
-  return `You are a fashion stylist AI. Generate a photorealistic full-body fashion photo of this person wearing a ${styleLabel.toLowerCase()} outfit that matches their "${palette.name}" seasonal color typology.
+  return `Generate a photorealistic full-body fashion photo of this person wearing a new ${styleLabel.toLowerCase()} outfit.
 
-OUTFIT SUGGESTION: ${outfit}
-Adapt the outfit to be appropriate for this person's apparent gender. For men: no earrings, no jewelry beyond a watch or simple bracelet, no exposed chest — always include a proper top (shirt, t-shirt, sweater, etc.). For women: feminine accessories are fine. Use common sense for gender-appropriate clothing choices.
+IDENTITY PRESERVATION (HIGHEST PRIORITY):
+- The person MUST be the SAME person from the reference photo — immediately recognizable
+- Copy their EXACT face: bone structure, eye shape/color, nose, mouth, jawline, skin tone, facial hair, wrinkles, freckles, moles
+- Copy their EXACT hair: color, style, length, texture, parting
+- Copy their EXACT body: shape, height, proportions, build
+- Do NOT beautify, slim, age, de-age, or alter ANY physical feature
+- If the person wears glasses in the reference, keep the glasses
 
-COLOR PALETTE RULES:
-- USE ONLY these colors: ${colorList}
-- AVOID these colors: ${forbidden}
-- Background should be a solid color: ${palette.backgroundHex}
+OUTFIT — ${styleLabel} style, "${palette.name}" color typology:
+${outfit}
+- Adapt the outfit to the person's apparent gender. For men: no earrings, no jewelry beyond a watch or simple bracelet, no exposed chest — always include a proper top. For women: feminine accessories and styling are fine.
+- Each garment should be clearly one of the allowed colors below — not an in-between shade
 
-FABRIC & TEXTURE: Use ${palette.fabricSuggestions.join(", ")}
+COLOR RULES (STRICT):
+- ALLOWED colors only: ${colorList}
+- FORBIDDEN colors (do not use anywhere in clothing or accessories): ${forbidden}
+- Every visible garment and accessory must match one of the allowed color hex values closely
 
-OVERALL VIBE: ${palette.vibe}
+FABRIC & TEXTURE: ${palette.fabricSuggestions.join(", ")} — show realistic fabric texture, weave, and natural draping/folds
 
-FACE & IDENTITY PRESERVATION (CRITICAL):
-- This is the MOST IMPORTANT rule: the person in the output MUST look like the SAME person as in the reference photo
-- Preserve the EXACT facial features: eye shape, nose, mouth, jawline, facial structure, skin tone, facial hair
-- Preserve the exact hair color, style, length, and texture
-- Preserve body shape, height, and proportions exactly
-- Do NOT change, beautify, age, or alter any facial features whatsoever
-- The only change should be the clothing — the person must be immediately recognizable
+PHOTOGRAPHY DIRECTION:
+- Background: clean, solid ${palette.backgroundHex} — no props, no scenery
+- Framing: full body, head to toe, centered, slight space above head and below feet
+- Pose: natural, relaxed standing pose — weight slightly shifted, arms at sides or one hand in pocket
+- Lighting: soft diffused studio lighting, subtle shadows for depth, no harsh highlights
+- Camera: shot at roughly 85mm equivalent, eye level, shallow depth of field on background only
+- Quality: high resolution, sharp focus on the person, professional fashion photography look
 
-OTHER INSTRUCTIONS:
-- Show the FULL body from head to toe
-- The outfit should look natural and well-fitted on this specific person
-- Lighting should be soft studio lighting
-- The person should be standing in a natural, relaxed pose
-- Make the clothing photorealistic with visible fabric texture and natural draping`;
+VIBE: ${palette.vibe}`;
 }
 
 function buildRefinementPrompt(typologyName, userRefinement) {
@@ -314,24 +317,26 @@ function buildRefinementPrompt(typologyName, userRefinement) {
     .join(", ");
   const forbidden = palette.forbiddenColors.join(", ");
 
-  return `Modify this fashion outfit photo based on the following request: "${userRefinement}"
+  return `Modify this fashion outfit photo. The user wants: "${userRefinement}"
 
-IMPORTANT COLOR PALETTE RULES (still apply):
-- USE ONLY these colors: ${colorList}
-- AVOID these colors: ${forbidden}
-- Keep the "${palette.name}" seasonal color typology
+IDENTITY PRESERVATION (HIGHEST PRIORITY):
+- The person MUST remain the EXACT same person — same face, same hair, same body, same skin tone
+- Do NOT change, beautify, slim, age, or alter ANY physical feature
+- If the person wears glasses, keep them
 
-FACE & IDENTITY PRESERVATION (CRITICAL):
-- The person MUST look like the SAME person as in the input photo
-- Preserve the EXACT facial features: eye shape, nose, mouth, jawline, facial structure, skin tone, facial hair
-- Preserve the exact hair color, style, length, and texture
-- Do NOT change, beautify, age, or alter any facial features whatsoever
+WHAT TO CHANGE:
+- ONLY modify what the user explicitly requested above
+- Everything else stays identical: same pose, same lighting, same background, same camera angle, same garments not mentioned in the request
 
-RULES:
-- Only change what the user requested
-- Keep everything else about the outfit and photo the same
-- Make changes look photorealistic and natural
-- Adapt clothing to be gender-appropriate (e.g. no earrings or exposed chest for men)`;
+COLOR RULES ("${palette.name}" typology — still enforced):
+- ALLOWED colors only: ${colorList}
+- FORBIDDEN colors: ${forbidden}
+- Any new or changed garments must use allowed colors only
+
+QUALITY:
+- The modified area must blend seamlessly with the rest of the image
+- Maintain the same photorealistic quality, fabric texture, and lighting consistency
+- Adapt clothing to the person's apparent gender (e.g. no earrings or exposed chest for men)`;
 }
 
 module.exports = { palettes, buildGenerationPrompt, buildRefinementPrompt };

@@ -19,6 +19,19 @@ const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 
 console.log("Models:", { CLAUDE_MODEL, GEMINI_MODEL });
 
+function parseBase64Image(input) {
+  const dataUrlMatch = input.match(/^data:(image\/\w+);base64,(.+)$/);
+  if (dataUrlMatch) {
+    return { mimeType: dataUrlMatch[1], data: dataUrlMatch[2] };
+  }
+  const header = Buffer.from(input.substring(0, 16), "base64");
+  let mimeType = "image/jpeg";
+  if (header[0] === 0x89 && header[1] === 0x50) mimeType = "image/png";
+  else if (header[0] === 0x52 && header[1] === 0x49) mimeType = "image/webp";
+  else if (header[0] === 0x47 && header[1] === 0x49) mimeType = "image/gif";
+  return { mimeType, data: input };
+}
+
 // Return all palette names (for typology override dropdown)
 app.get("/api/palettes", (req, res) => {
   const data = {};
@@ -45,8 +58,13 @@ app.post("/api/analyze", upload.single("face"), async (req, res) => {
       return res.status(400).json({ error: "No face photo provided" });
     }
 
-    const base64Face = faceBuffer.toString("base64");
-    const mimeType = req.file ? req.file.mimetype : "image/jpeg";
+    let mimeType, base64Face;
+    if (req.file) {
+      base64Face = req.file.buffer.toString("base64");
+      mimeType = req.file.mimetype;
+    } else {
+      ({ mimeType, data: base64Face } = parseBase64Image(req.body.face));
+    }
 
     const typologyNames = Object.keys(palettes).join(", ");
 
@@ -63,7 +81,41 @@ app.post("/api/analyze", upload.single("face"), async (req, res) => {
             },
             {
               type: "text",
-              text: `Analyze this person's face photo. Determine their seasonal color typology from the 12-season system: ${typologyNames}. Consider skin undertone (warm/cool/neutral), hair color, eye color, and overall contrast level (low/medium/high). Return ONLY a valid JSON object with no additional text: {"typology": "<exact type name from the list>", "reasoning": "<brief 2-3 sentence explanation of your analysis>"}`,
+              text: `You are an expert color analyst trained in the 12-season personal color analysis system. Analyze this person's photo to determine their seasonal color typology.
+
+VALID TYPOLOGIES: ${typologyNames}
+
+ANALYSIS METHOD — evaluate these four dimensions systematically:
+
+1. UNDERTONE (Warm vs Cool):
+   - Warm: skin has golden, peachy, or yellow undertones; veins appear greenish
+   - Cool: skin has pink, rosy, or bluish undertones; veins appear blue/purple
+   - Look at the neck, jawline, and forehead where undertone is most visible
+
+2. VALUE/DEPTH (Light vs Medium vs Deep):
+   - Consider the OVERALL combination of hair color + skin tone + eye color
+   - Light: fair skin, light hair (blonde, light brown, light red), light eyes
+   - Deep: dark hair, medium-to-dark skin or high contrast dark features, dark eyes
+   - Medium: falls between — neither strikingly light nor deep
+
+3. CHROMA (Bright/Clear vs Soft/Muted):
+   - Bright/Clear: high contrast between features, vivid eye color, clear skin
+   - Soft/Muted: low contrast between features, blended or muted coloring, gentle transitions
+
+4. SEASON MAPPING:
+   - Spring (warm, light-to-medium, clear): Light Spring, True Spring, Bright Spring
+   - Summer (cool, light-to-medium, soft): Light Summer, True Summer, Soft Summer
+   - Autumn (warm, medium-to-deep, muted-to-rich): Soft Autumn, True Autumn, Deep Autumn
+   - Winter (cool, medium-to-deep, clear/high-contrast): Deep Winter, True Winter, Bright Winter
+
+KEY DISTINCTIONS:
+   - Light Spring vs Light Summer: both light, but Spring is warm-toned, Summer is cool-toned
+   - Soft Summer vs Soft Autumn: both muted, but Summer is cool, Autumn is warm
+   - Deep Autumn vs Deep Winter: both deep, but Autumn is warm, Winter is cool
+   - Bright Spring vs Bright Winter: both vivid, but Spring is warm, Winter is cool
+   - "True" seasons are the most balanced expression of their season (not notably light, deep, soft, or bright)
+
+Return ONLY a valid JSON object: {"typology": "<exact name from the list>", "reasoning": "<4-5 sentences explaining your undertone, value, and chroma observations, and why this maps to the chosen season>"}`,
             },
           ],
         },
@@ -119,13 +171,12 @@ app.post("/api/generate", async (req, res) => {
       generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
     });
 
-    // Strip data URL prefix if present
-    const base64Data = bodyPhoto.replace(/^data:image\/\w+;base64,/, "");
+    const { mimeType, data: base64Data } = parseBase64Image(bodyPhoto);
 
     const result = await model.generateContent([
       {
         inlineData: {
-          mimeType: "image/jpeg",
+          mimeType,
           data: base64Data,
         },
       },
@@ -134,6 +185,15 @@ app.post("/api/generate", async (req, res) => {
 
     const response = result.response;
     console.log("Generate: requested=%s actual=%s", GEMINI_MODEL, response.modelVersion);
+
+    if (!response.candidates || !response.candidates[0]?.content) {
+      const reason = response.promptFeedback?.blockReason
+        || response.candidates?.[0]?.finishReason
+        || "unknown";
+      console.error("Generate: no candidates returned, reason=%s", reason, JSON.stringify(response, null, 2));
+      return res.status(500).json({ error: `Generation blocked or empty (reason: ${reason})` });
+    }
+
     const parts = response.candidates[0].content.parts;
 
     let imageData = null;
