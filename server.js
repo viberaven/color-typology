@@ -2,9 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
-const Anthropic = require("@anthropic-ai/sdk");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { ANTHROPIC_API_KEY, GOOGLE_API_KEY, CLAUDE_MODEL, GEMINI_MODEL } = require("./config");
+const { GOOGLE_API_KEY, GENERATIVE_MODEL, ANALYSIS_MODEL } = require("./config");
 const { palettes, buildGenerationPrompt, buildRefinementPrompt } = require("./color-palettes");
 
 const app = express();
@@ -14,10 +13,9 @@ app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 
-console.log("Models:", { CLAUDE_MODEL, GEMINI_MODEL });
+console.log("Models:", { ANALYSIS_MODEL, GENERATIVE_MODEL });
 
 function parseBase64Image(input) {
   const dataUrlMatch = input.match(/^data:(image\/\w+);base64,(.+)$/);
@@ -45,7 +43,7 @@ app.get("/api/palettes", (req, res) => {
   res.json(data);
 });
 
-// Analyze face photo with Claude to determine color typology
+// Analyze face photo to determine color typology
 app.post("/api/analyze", upload.single("face"), async (req, res) => {
   try {
     const faceBuffer = req.file
@@ -68,20 +66,7 @@ app.post("/api/analyze", upload.single("face"), async (req, res) => {
 
     const typologyNames = Object.keys(palettes).join(", ");
 
-    const response = await anthropic.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: mimeType, data: base64Face },
-            },
-            {
-              type: "text",
-              text: `You are an expert color analyst trained in the 12-season personal color analysis system. Analyze this person's photo to determine their seasonal color typology.
+    const analysisPrompt = `You are an expert color analyst trained in the 12-season personal color analysis system. Analyze this person's photo to determine their seasonal color typology.
 
 VALID TYPOLOGIES: ${typologyNames}
 
@@ -115,31 +100,34 @@ KEY DISTINCTIONS:
    - Bright Spring vs Bright Winter: both vivid, but Spring is warm, Winter is cool
    - "True" seasons are the most balanced expression of their season (not notably light, deep, soft, or bright)
 
-Return ONLY a valid JSON object: {"typology": "<exact name from the list>", "reasoning": "<4-5 sentences explaining your undertone, value, and chroma observations, and why this maps to the chosen season>"}`,
-            },
-          ],
-        },
-      ],
-    });
+Return ONLY a valid JSON object: {"typology": "<exact name from the list>", "reasoning": "<4-5 sentences explaining your undertone, value, and chroma observations, and why this maps to the chosen season>"}`;
 
-    const text = response.content[0].text.trim();
+    const analysisModel = genAI.getGenerativeModel({ model: ANALYSIS_MODEL });
+    const result = await analysisModel.generateContent([
+      { inlineData: { mimeType, data: base64Face } },
+      { text: analysisPrompt },
+    ]);
+
+    const response = result.response;
+    console.log("Analyze: requested=%s actual=%s", ANALYSIS_MODEL, response.modelVersion);
+    const text = response.text().trim();
     // Extract JSON from the response (handle potential markdown wrapping)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return res.status(500).json({ error: "Failed to parse Claude response", raw: text });
+      return res.status(500).json({ error: "Failed to parse analysis response", raw: text });
     }
 
-    const result = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonMatch[0]);
 
     // Validate the typology name
-    if (!palettes[result.typology]) {
-      return res.status(500).json({ error: `Unknown typology: ${result.typology}`, raw: text });
+    if (!palettes[parsed.typology]) {
+      return res.status(500).json({ error: `Unknown typology: ${parsed.typology}`, raw: text });
     }
 
-    const palette = palettes[result.typology];
+    const palette = palettes[parsed.typology];
     res.json({
-      typology: result.typology,
-      reasoning: result.reasoning,
+      typology: parsed.typology,
+      reasoning: parsed.reasoning,
       palette: {
         allowedColors: palette.allowedColors,
         forbiddenColors: palette.forbiddenColors,
@@ -167,7 +155,7 @@ app.post("/api/generate", async (req, res) => {
     }
 
     const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
+      model: GENERATIVE_MODEL,
       generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
     });
 
@@ -184,7 +172,7 @@ app.post("/api/generate", async (req, res) => {
     ]);
 
     const response = result.response;
-    console.log("Generate: requested=%s actual=%s", GEMINI_MODEL, response.modelVersion);
+    console.log("Generate: requested=%s actual=%s", GENERATIVE_MODEL, response.modelVersion);
 
     if (!response.candidates || !response.candidates[0]?.content) {
       const reason = response.promptFeedback?.blockReason
@@ -234,7 +222,7 @@ app.post("/api/refine", async (req, res) => {
     }
 
     const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
+      model: GENERATIVE_MODEL,
       generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
     });
 
@@ -251,7 +239,7 @@ app.post("/api/refine", async (req, res) => {
     ]);
 
     const response = result.response;
-    console.log("Refine: requested=%s actual=%s", GEMINI_MODEL, response.modelVersion);
+    console.log("Refine: requested=%s actual=%s", GENERATIVE_MODEL, response.modelVersion);
     const parts = response.candidates[0].content.parts;
 
     let imageData = null;
