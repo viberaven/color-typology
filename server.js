@@ -278,6 +278,7 @@ app.post("/api/refine", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Color Typology server running on http://localhost:${PORT}`);
+const HOST = process.env.HOST || "localhost";
+app.listen(PORT, HOST, () => {
+  console.log(`Color Typology server running on http://${HOST}:${PORT}`);
 });
