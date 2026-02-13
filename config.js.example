@@ -1,0 +1,8 @@
+module.exports = {
+  ANTHROPIC_API_KEY: "KEY",
+  GOOGLE_API_KEY: "KEY",
+
+  CLAUDE_MODEL: "claude-sonnet-4-5",
+  GEMINI_MODEL: "gemini-2.5-flash-image",
+  // GEMINI_MODEL: "gemini-3-pro-image-preview",
+};
