@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const ai = new GoogleGenAI({ apiKey: GOOGLE_API_KEY });
+const ai = new GoogleGenAI({ apiKey: GOOGLE_API_KEY, httpOptions: { timeout: 180_000 } });
 
 console.log("Models:", { ANALYSIS_MODEL, GENERATIVE_MODEL });
 
