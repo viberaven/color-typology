@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const { GOOGLE_API_KEY, GENERATIVE_MODEL, ANALYSIS_MODEL } = require("./config");
 const { palettes, buildGenerationPrompt, buildRefinementPrompt } = require("./color-palettes");
 
@@ -13,7 +13,7 @@ app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+const ai = new GoogleGenAI({ apiKey: GOOGLE_API_KEY });
 
 console.log("Models:", { ANALYSIS_MODEL, GENERATIVE_MODEL });
 
@@ -102,15 +102,19 @@ KEY DISTINCTIONS:
 
 Return ONLY a valid JSON object: {"typology": "<exact name from the list>", "reasoning": "<4-5 sentences explaining your undertone, value, and chroma observations, and why this maps to the chosen season>"}`;
 
-    const analysisModel = genAI.getGenerativeModel({ model: ANALYSIS_MODEL });
-    const result = await analysisModel.generateContent([
-      { inlineData: { mimeType, data: base64Face } },
-      { text: analysisPrompt },
-    ]);
+    const result = await ai.models.generateContent({
+      model: ANALYSIS_MODEL,
+      contents: [
+        { inlineData: { mimeType, data: base64Face } },
+        { text: analysisPrompt },
+      ],
+      config: {
+        temperature: 1.0,
+      },
+    });
 
-    const response = result.response;
-    console.log("Analyze: requested=%s actual=%s", ANALYSIS_MODEL, response.modelVersion);
-    const text = response.text().trim();
+    console.log("Analyze: model=%s tokens=%j", ANALYSIS_MODEL, result.usageMetadata);
+    const text = result.text.trim();
     // Extract JSON from the response (handle potential markdown wrapping)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -154,35 +158,31 @@ app.post("/api/generate", async (req, res) => {
       return res.status(400).json({ error: `Unknown typology: ${typology}` });
     }
 
-    const model = genAI.getGenerativeModel({
-      model: GENERATIVE_MODEL,
-      generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-    });
-
     const { mimeType, data: base64Data } = parseBase64Image(bodyPhoto);
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType,
-          data: base64Data,
-        },
+    const result = await ai.models.generateContent({
+      model: GENERATIVE_MODEL,
+      contents: [
+        { inlineData: { mimeType, data: base64Data } },
+        { text: prompt },
+      ],
+      config: {
+        responseModalities: ["TEXT", "IMAGE"],
+        temperature: 1.0,
       },
-      { text: prompt },
-    ]);
+    });
 
-    const response = result.response;
-    console.log("Generate: requested=%s actual=%s", GENERATIVE_MODEL, response.modelVersion);
+    console.log("Generate: model=%s tokens=%j", GENERATIVE_MODEL, result.usageMetadata);
 
-    if (!response.candidates || !response.candidates[0]?.content) {
-      const reason = response.promptFeedback?.blockReason
-        || response.candidates?.[0]?.finishReason
+    if (!result.candidates || !result.candidates[0]?.content) {
+      const reason = result.promptFeedback?.blockReason
+        || result.candidates?.[0]?.finishReason
         || "unknown";
-      console.error("Generate: no candidates returned, reason=%s", reason, JSON.stringify(response, null, 2));
+      console.error("Generate: no candidates returned, reason=%s", reason, JSON.stringify(result, null, 2));
       return res.status(500).json({ error: `Generation blocked or empty (reason: ${reason})` });
     }
 
-    const parts = response.candidates[0].content.parts;
+    const parts = result.candidates[0].content.parts;
 
     let imageData = null;
     let textResponse = "";
@@ -221,26 +221,22 @@ app.post("/api/refine", async (req, res) => {
       return res.status(400).json({ error: `Unknown typology: ${typology}` });
     }
 
-    const model = genAI.getGenerativeModel({
-      model: GENERATIVE_MODEL,
-      generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-    });
-
     const base64Data = previousImage.replace(/^data:image\/\w+;base64,/, "");
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: "image/png",
-          data: base64Data,
-        },
+    const result = await ai.models.generateContent({
+      model: GENERATIVE_MODEL,
+      contents: [
+        { inlineData: { mimeType: "image/png", data: base64Data } },
+        { text: prompt },
+      ],
+      config: {
+        responseModalities: ["TEXT", "IMAGE"],
+        temperature: 1.0,
       },
-      { text: prompt },
-    ]);
+    });
 
-    const response = result.response;
-    console.log("Refine: requested=%s actual=%s", GENERATIVE_MODEL, response.modelVersion);
-    const parts = response.candidates[0].content.parts;
+    console.log("Refine: model=%s tokens=%j", GENERATIVE_MODEL, result.usageMetadata);
+    const parts = result.candidates[0].content.parts;
 
     let imageData = null;
     let textResponse = "";
