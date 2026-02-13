@@ -57,11 +57,27 @@ async function fetchPalettes() {
 }
 
 // Populate the manual selection buttons in step 1
+const typologyEmojis = {
+  "Light Spring": "🌸",
+  "True Spring": "🌷",
+  "Bright Spring": "🌻",
+  "Light Summer": "🫧",
+  "True Summer": "🌊",
+  "Soft Summer": "🌫️",
+  "Soft Autumn": "🍂",
+  "True Autumn": "🍁",
+  "Deep Autumn": "🌰",
+  "Deep Winter": "🌑",
+  "True Winter": "❄️",
+  "Bright Winter": "💎",
+};
+
 async function initTypologyButtons() {
   await fetchPalettes();
   for (const name of Object.keys(allPalettes)) {
     const btn = document.createElement("button");
-    btn.textContent = name;
+    const emoji = typologyEmojis[name] || "";
+    btn.textContent = emoji ? `${emoji} ${name}` : name;
     btn.dataset.typology = name;
     btn.className = "px-3 py-1.5 text-sm rounded-lg border border-stone-300 text-stone-600 hover:border-violet-400 hover:text-violet-700 hover:bg-violet-50 transition-colors";
     btn.addEventListener("click", () => selectTypologyButton(name));
