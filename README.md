@@ -30,8 +30,8 @@ Edit `config.js` with your Google API key:
 ```js
 module.exports = {
   GOOGLE_API_KEY: "your-key-here",
-  ANALYSIS_MODEL: "gemini-3-flash-preview",
-  GENERATIVE_MODEL: "gemini-3-pro-image-preview",
+  ANALYSIS_MODEL: "gemini-3.1-flash-lite-preview",
+  GENERATIVE_MODEL: "gemini-3.1-flash-image-preview",
 };
 ```
 
